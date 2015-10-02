@@ -3,25 +3,22 @@ package de.kaufhof.hajobs
 import java.util.UUID
 
 import com.datastax.driver.core.ConsistencyLevel.LOCAL_QUORUM
+import com.datastax.driver.core._
 import com.datastax.driver.core.querybuilder.QueryBuilder
 import com.datastax.driver.core.querybuilder.QueryBuilder._
-import com.datastax.driver.core.querybuilder.Select.Where
-import de.kaufhof.hajobs.utils.CassandraUtils
-import CassandraUtils._
-import com.datastax.driver.core._
 import de.kaufhof.hajobs.JobState._
+import de.kaufhof.hajobs.utils.CassandraUtils._
 import org.joda.time.DateTime
 import org.slf4j.LoggerFactory.getLogger
-
 import play.api.libs.json.{JsValue, Json}
 
-import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext, Future}
 import scala.util.control.NonFatal
 
 /**
  * Repository to manage job status in the database.
- * Write and Read Methods can be called with Consitency Level LOCAL_QUORUM
+ * Write and Read Methods can be called with Consistency Level LOCAL_QUORUM
  * to get consistent Job data from Cassandra. This is necessary to prevent
  * the JobSupervisor from setting Finished Jobs to Dead Jobs
  */
@@ -41,6 +38,7 @@ class JobStatusRepository(session: Session,
   private val TimestampColumn = "job_status_ts"
   private val ContentColumn = "content"
   private val TriggerIdColumn = "trigger_id"
+  private val JobMonitoringStateColumn = "job_monitoring_state"
 
   private def insertMetaQuery(jobStatus: JobStatus) = {
     val stmt = insertInto(MetaTable)
@@ -50,6 +48,7 @@ class JobStatusRepository(session: Session,
       .value(JobStateColumn, jobStatus.jobState.toString)
       .value(JobResultColumn, jobStatus.jobResult.toString)
       .value(TriggerIdColumn, jobStatus.triggerId)
+      .value(JobMonitoringStateColumn, jobStatus.jobMonitoringState.fold(JobMonitoringState.Undefined){state => state}.toString)
       .using(QueryBuilder.ttl(ttl.toSeconds.toInt))
     stmt.setConsistencyLevel(LOCAL_QUORUM)
     stmt
@@ -81,7 +80,7 @@ class JobStatusRepository(session: Session,
   /**
    * Finds the latest job status entries for all jobs.
    * Every JobState is loaded with a single select statement
-   * It is recommened to use partition keys if possible and avoid
+   * It is recommended to use partition keys if possible and avoid
    * IN statement in WHERE clauses, therefore we prefer to execute
    * more than one select statement
    */
@@ -100,6 +99,35 @@ class JobStatusRepository(session: Session,
 
     val results = jobTypes.all.toList.map(getLatestMetadata)
     Future.sequence(results).map(_.flatten)
+  }
+
+  /**
+   * Finds the latest job status entries for one job from a specified timestamp (24h default) up to now
+   *
+   * @param jobType
+   * @param timeStamp
+   * @param readwithQuorum
+   * @param ec
+   * @return
+   */
+  def getMetadataSinceTs(jobType: JobType, timeStamp: Option[DateTime] = None, readwithQuorum: Boolean = false)
+                        (implicit ec: ExecutionContext): Future[Option[List[JobStatus]]] = {
+    import scala.collection.JavaConversions._
+
+    //default time we check if no timestamp is send = 24 hours
+    val ts: DateTime = timeStamp.getOrElse(DateTime.now().minusHours(24))
+
+    val selectMetadata = select().all().from(MetaTable).where(QueryBuilder.eq(JobTypeColumn, jobType.name))
+    if (readwithQuorum) {
+      // setConsistencyLevel returns "this", we do not need to reassign
+      selectMetadata.setConsistencyLevel(ConsistencyLevel.LOCAL_QUORUM)
+    }
+
+    val resultFuture: ResultSetFuture = session.executeAsync(selectMetadata)
+    resultFuture.map( res =>
+      Option(res.all.toList.flatMap( row =>
+        rowToStatus(row, isMeta = false).filter(_.jobStatusTs.isAfter(ts)))
+      ))
   }
 
   /**

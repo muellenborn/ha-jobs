@@ -2,6 +2,7 @@ package de.kaufhof.hajobs
 
 import java.util.UUID
 
+import de.kaufhof.hajobs.JobMonitoringState.JobMonitoringState
 import de.kaufhof.hajobs.JobResult.JobResult
 import de.kaufhof.hajobs.JobState.JobState
 import de.kaufhof.hajobs.utils.EnumJsonSupport
@@ -16,7 +17,7 @@ import scala.util.control.NonFatal
  * Represents Status of Import Jobs
  */
 case class JobStatus(triggerId: UUID, jobType: JobType, jobId: UUID, jobState: JobState, jobResult: JobResult, jobStatusTs: DateTime,
-                     content: Option[JsValue] = None)
+                     content: Option[JsValue] = None, jobMonitoringState: Option[JobMonitoringState] = None)
 
 object JobState extends Enumeration {
   type JobState = Value
@@ -42,6 +43,18 @@ object JobResult extends Enumeration {
 
   implicit val enumRead: Reads[JobResult] = EnumJsonSupport.enumReads(JobResult)
   implicit val enumWrite: Writes[JobResult] = EnumJsonSupport.enumWrites
+}
+
+object JobMonitoringState extends Enumeration {
+  type JobMonitoringState = Value
+
+  val Undefined = Value("UNDEFINED")
+  val Ok = Value("OK")
+  val Warning = Value("WARNING")
+  val Critical = Value("CRITICAL")
+
+  implicit val enumRead: Reads[JobMonitoringState] = EnumJsonSupport.enumReads(JobMonitoringState)
+  implicit val enumWrite: Writes[JobMonitoringState] = EnumJsonSupport.enumWrites
 }
 
 /**

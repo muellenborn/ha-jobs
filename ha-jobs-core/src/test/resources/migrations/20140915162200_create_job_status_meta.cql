@@ -9,6 +9,7 @@ CREATE TABLE job_status_meta (
   job_status_ts timestamp,
   job_state text,
   job_result text,
+  job_monitoring_state text,
   PRIMARY KEY (job_type, job_id)
 ) WITH CLUSTERING ORDER BY (job_id DESC);
 
