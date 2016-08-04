@@ -1,5 +1,6 @@
 package de.kaufhof.hajobs
 
+import org.joda.time.DateTime
 import org.slf4j.LoggerFactory.getLogger
 
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -15,7 +16,8 @@ import scala.concurrent.Future
  */
 class JobUpdater(lockRepository: LockRepository,
                  jobStatusRepository: JobStatusRepository,
-                 limitByJobType: JobType => Int = JobStatusRepository.defaultLimitByJobType) {
+                 limitByJobType: JobType => Int = JobStatusRepository.defaultLimitByJobType,
+                 latencyForDeadJobDetection: Long = 500L) {
 
   private val logger = getLogger(getClass)
 
@@ -32,12 +34,20 @@ class JobUpdater(lockRepository: LockRepository,
       jobs <- jobStatusRepository.getMetadata(readwithQuorum = true, limitByJobType = limitByJobType)
 
       runningJobs = jobs.flatMap(_._2).toList.filter(_.jobResult == JobResult.Pending)
-      deadJobs = runningJobs.filterNot(job => locks.exists(_.jobId == job.jobId))
+      // we seemed to have a problem with declaring recently started jobs immediately as DEAD so we use the check here to
+      // become sur that the jobs we check had enough time to save their lock state.
+      deadJobs = runningJobs.filterNot(job => locks.exists(_.jobId == job.jobId) && jobStartLatencyCheck(job, latencyForDeadJobDetection))
       updatedJobs <- updateDeadJobState(deadJobs)
 
     } yield {
       updatedJobs
     }
+  }
+
+  // to avoid latency problems between saving the lock of a job to the repo and parallel checking jobs for DEAD status
+  // we use the StatusTs to check only jobs which had enough time to save their lock after getting started
+  private[hajobs] def jobStartLatencyCheck(jobStatus: JobStatus, livingTimeInMillis: Long): Boolean = {
+    (jobStatus.jobStatusTs.getMillis - DateTime.now().getMillis) >= livingTimeInMillis
   }
 
   private[hajobs] def updateDeadJobState(deadJobs: List[JobStatus]): Future[List[JobStatus]] = {
