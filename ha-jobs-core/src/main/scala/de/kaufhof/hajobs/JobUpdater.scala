@@ -17,7 +17,7 @@ import scala.concurrent.Future
 class JobUpdater(lockRepository: LockRepository,
                  jobStatusRepository: JobStatusRepository,
                  limitByJobType: JobType => Int = JobStatusRepository.defaultLimitByJobType,
-                 latencyForDeadJobDetection: Long = 500L) {
+                 latencyForDeadJobDetection: Long = 200L) {
 
   private val logger = getLogger(getClass)
 
